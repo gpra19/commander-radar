@@ -15,7 +15,7 @@ st.markdown("""
     .main { background-color: #0e1117; }
     .stMetric { background-color: #161b22; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
     </style>
-    """, unsafe_allow_status_code=True)
+    """, unsafe_allow_html=True) # ✅ INI YANG BENAR
 
 st.title("🎖️ THE STRATEGIC COMMANDER V4.0")
 st.subheader("Integrated Tactical Dashboard: AI Prediction + Technicals + Sentiment")
