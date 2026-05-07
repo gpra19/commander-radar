@@ -1,8 +1,6 @@
-wheel
-setuptools
 streamlit
 yfinance
-numpy<2.0.0
+numpy
 pandas
 matplotlib
 scikit-learn
