@@ -168,7 +168,7 @@ if tombol_pindai:
                 
                 st.markdown("<div class='laci-judul'>Volatilitas & Sinyal</div>", unsafe_allow_html=True)
                 v1, v2, v3, v4 = st.columns(4)
-                v1.metric("ATR (14)", f"Rp {last.get('ATR_14', 0):,.0f}")
+                v1.metric("ATR (14)", f"Rp {last.get('ATRr_14', 0):,.0f}")
                 v2.metric("MACD Line", format_angka(last.get('MACD_12_26_9'), "desimal"))
                 v3.metric("Signal Line", format_angka(last.get('MACDs_12_26_9'), "desimal"))
                 v4.metric("Pivot (Std)", f"Rp {pivot:,.0f}")
