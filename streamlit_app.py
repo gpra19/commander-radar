@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
+import requests
 
 # Mengatur tampilan layar menjadi layar penuh (wide)
 st.set_page_config(page_title="Radar The Commander", layout="wide")
@@ -24,8 +25,12 @@ if st.button("🚀 Pindai Target"):
     st.info(f"📡 Mengunci koordinat satelit untuk {kode_saham}...")
     
     try:
-        # Menarik logistik data
-        ticker = yf.Ticker(kode_saham)
+        # Menyiapkan sesi penyamaran Anti-Jamming
+        session = requests.Session()
+        session.headers['User-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+
+        # Menarik logistik data menggunakan sesi khusus
+        ticker = yf.Ticker(kode_saham, session=session)
         df = ticker.history(period='60d')
         
         if df.empty:
