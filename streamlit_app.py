@@ -110,21 +110,3 @@ if tombol_pindai:
             
             # Awan Probabilitas
             ax.fill_between(tgl_pred, lower_band, upper_band, color='#22D3EE', alpha=0.15, label='Batas Toleransi (Aman)')
-            
-            # Kosmetik minimalis
-            ax.legend(facecolor='#151C2C', edgecolor='#25324B', labelcolor='#E2E8F0', fontsize=12)
-            ax.set_facecolor('#0B101E')
-            ax.tick_params(colors='#8B9BB4', labelsize=10)
-            ax.grid(color='#25324B', linestyle='--', alpha=0.4)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_color('#25324B')
-            ax.spines['bottom'].set_color('#25324B')
-            
-            fig.patch.set_facecolor('#0B101E')
-            st.pyplot(fig)
-
-        except Exception as e:
-            st.error(f"Gagal memproses {kode_saham}: {e}")
-
-    st.success("🏁 EKSEKUSI SELESAI")
