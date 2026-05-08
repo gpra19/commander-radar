@@ -15,7 +15,7 @@ st.title("Radar Volatilitas & Prediksi Harga")
 st.sidebar.header("Parameter Input")
 
 # 1. Input Ticker Kosong & Tanpa .JK otomatis
-ticker_input = st.sidebar.text_input("Kode Saham", value=None, placeholder="Contoh: KLBF")
+ticker_input = st.sidebar.text_input("Kode Saham", value=None, placeholder="Contoh: BBCA")
 
 # 2. Input Harga Kosong (Tidak ada 0.00)
 harga_entry = st.sidebar.number_input("Harga Entry (Opsional)", value=None, placeholder="Masukkan harga beli")
