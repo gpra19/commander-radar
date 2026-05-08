@@ -54,8 +54,12 @@ if menu == "Radar Analisis":
                     
                     data = tarik_data_radar(ticker_yf)
                     
+                    # --- PERBAIKAN BUG NaN DI SINI ---
+                    # Hapus semua baris yang harganya kosong (NaN) dari satelit
+                    data = data.dropna(subset=['Close'])
+                    
                     if data.empty:
-                        st.error("Data tidak ditemukan. Pastikan kode saham benar.")
+                        st.error("Data tidak ditemukan atau saham sedang disuspensi penuh.")
                     else:
                         if isinstance(data.columns, pd.MultiIndex):
                             data.columns = data.columns.get_level_values(0)
@@ -162,7 +166,7 @@ elif menu == "Portofolio Live":
                 avg_price = float(row['Harga_Average'])
                 
                 live_price = tarik_harga_live(kode_yf)
-                last_price = live_price if live_price is not None else avg_price
+                last_price = live_price if live_price is not None and not pd.isna(live_price) else avg_price
                 
                 lembar = lot * 100
                 modal_aset = lembar * avg_price
