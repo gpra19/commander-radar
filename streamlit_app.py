@@ -12,12 +12,12 @@ def format_rp(angka):
         return "-"
     return f"{angka:,.0f}".replace(",", ".")
 
-# --- SISTEM MEMORI (CACHE) AGAR LOADING SUPER CEPAT ---
-@st.cache_data(ttl=300) # Simpan data radar selama 5 menit
+# --- SISTEM MEMORI (CACHE) ---
+@st.cache_data(ttl=300)
 def tarik_data_radar(ticker):
     return yf.download(ticker, period="3mo", interval="1d", progress=False)
 
-@st.cache_data(ttl=60) # Simpan harga live portofolio selama 1 menit
+@st.cache_data(ttl=60)
 def tarik_harga_live(ticker):
     hist = yf.Ticker(ticker).history(period="1d")
     if not hist.empty:
@@ -52,7 +52,6 @@ if menu == "Radar Analisis":
                     if not ticker_yf.endswith(".JK"):
                         ticker_yf += ".JK"
                     
-                    # Menggunakan fungsi Cache di sini
                     data = tarik_data_radar(ticker_yf)
                     
                     if data.empty:
@@ -80,8 +79,11 @@ if menu == "Radar Analisis":
                         
                         df_pred = data.reset_index()
                         df_pred['Date_Ordinal'] = df_pred['Date'].map(datetime.toordinal)
-                        X, y = df_pred[['Date_Ordinal']].values, df_pred['Close'].values
-                        model = LinearRegression().fit(X, y)
+                        X = df_pred[['Date_Ordinal']].values
+                        y = df_pred['Close'].values
+                        
+                        model = LinearRegression()
+                        model.fit(X, y)
                         
                         last_date = df_pred['Date'].max()
                         tgl_pred = [last_date + timedelta(days=i) for i in range(1, 8)]
@@ -107,9 +109,103 @@ if menu == "Radar Analisis":
                         with tab1:
                             fig = go.Figure()
                             hist_data = df_pred.tail(30)
-                            tanggal_min, tanggal_max = hist_data['Date'].min(), pd.Series(tgl_pred).max()
+                            tanggal_min = hist_data['Date'].min()
+                            tanggal_max = pd.Series(tgl_pred).max()
                             
                             fig.add_trace(go.Scatter(x=hist_data['Date'], y=hist_data['Close'], mode='lines', name='Harga Close', line=dict(color='white', width=2)))
+                            fig.add_trace(go.Scatter(x=tgl_pred, y=predictions, mode='lines', name='Prediksi H+7', line=dict(color='#F59E0B', width=2, dash='dash')))
+                            
+                            upper_band = predictions + jarak_toleransi
+                            lower_band = predictions - jarak_toleransi
+                            fig.add_trace(go.Scatter(x=tgl_pred, y=upper_band, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
+                            fig.add_trace(go.Scatter(x=tgl_pred, y=lower_band, mode='lines', fill='tonexty', fillcolor='rgba(34, 211, 238, 0.1)', line=dict(width=0), name='Zona Volatilitas'))
+                            
+                            if harga_beli > 0:
+                                fig.add_trace(go.Scatter(x=[tanggal_min, tanggal_max], y=[harga_beli, harga_beli], mode='lines', name='Harga Entry', line=dict(color='#10B981', dash='dot', width=2)))
+                                fig.add_trace(go.Scatter(x=[tanggal_min, tanggal_max], y=[rekomendasi_sl, rekomendasi_sl], mode='lines', name='Stop Loss', line=dict(color='#EF4444', width=2)))
+
+                            fig.update_layout(template='plotly_dark', hovermode='x', dragmode=False, margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                            fig.update_xaxes(fixedrange=True)
+                            fig.update_yaxes(fixedrange=True)
+                            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+                        with tab2:
+                            df_raw = df[['Open', 'High', 'Low', 'Close', 'Volume']].tail(15).copy()
+                            df_raw.index = df_raw.index.strftime('%d-%m-%Y')
+                            df_raw['Volume'] = df_raw['Volume'] / 100
+                            df_raw = df_raw.rename(columns={'Open':'Open (Rp)', 'High':'High (Rp)', 'Low':'Low (Rp)', 'Close':'Close (Rp)', 'Volume':'Volume (Lot)'})
+                            for col in df_raw.columns:
+                                df_raw[col] = df_raw[col].apply(format_rp)
+                            st.dataframe(df_raw, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Gagal memproses analisis: {e}")
+
+# ==========================================
+# MODE 2: PORTOFOLIO LIVE
+# ==========================================
+elif menu == "Portofolio Live":
+    st.title("📊 Portofolio Live")
+    
+    try:
+        df_porto = pd.read_csv('portofolio_aktif.csv')
+        total_modal_all = 0
+        total_nilai_all = 0
+        live_data = []
+
+        with st.spinner("Menghitung valuasi portofolio..."):
+            for index, row in df_porto.iterrows():
+                kode_asli = str(row['Kode']).strip().upper()
+                kode_yf = kode_asli if kode_asli.endswith('.JK') else f"{kode_asli}.JK"
+                
+                lot = float(row['Lot'])
+                avg_price = float(row['Harga_Average'])
+                
+                live_price = tarik_harga_live(kode_yf)
+                last_price = live_price if live_price is not None else avg_price
+                
+                lembar = lot * 100
+                modal_aset = lembar * avg_price
+                nilai_aset = lembar * last_price
+                
+                pnl_rp = nilai_aset - modal_aset
+                pnl_pct = (pnl_rp / modal_aset) * 100 if modal_aset > 0 else 0
+                
+                total_modal_all += modal_aset
+                total_nilai_all += nilai_aset
+                
+                live_data.append({
+                    "Kode": kode_asli.replace(".JK", ""), "Lot": lot, "Avg": avg_price, "Last": last_price,
+                    "Modal": modal_aset, "Nilai": nilai_aset, "PnL_Rp": pnl_rp, "PnL_Pct": pnl_pct
+                })
+
+        total_pnl_rp = total_nilai_all - total_modal_all
+        total_pnl_pct = (total_pnl_rp / total_modal_all) * 100 if total_modal_all > 0 else 0
+        
+        st.markdown("### Ringkasan Aset")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Nilai Saat Ini", f"Rp {format_rp(total_nilai_all)}")
+        col2.metric("Total Modal", f"Rp {format_rp(total_modal_all)}")
+        col3.metric("Total Return", f"Rp {format_rp(total_pnl_rp)}", f"{total_pnl_pct:.2f}%")
+        
+        st.markdown("---")
+        st.markdown("### Detail Aset")
+
+        for data in live_data:
+            with st.container():
+                c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
+                c1.markdown(f"<h4 style='margin-bottom:0;'>{data['Kode']}</h4><span style='color:gray;'>{data['Lot']:g} Lot</span>", unsafe_allow_html=True)
+                c2.markdown(f"<span style='color:gray;'>Avg:</span> {format_rp(data['Avg'])}<br><span style='color:gray;'>Last:</span> {format_rp(data['Last'])}", unsafe_allow_html=True)
+                warna_pnl = "#10B981" if data['PnL_Rp'] > 0 else "#EF4444" if data['PnL_Rp'] < 0 else "gray"
+                simbol_pnl = "+" if data['PnL_Rp'] > 0 else ""
+                c3.markdown(f"<span style='color:gray;'>Return</span><br><span style='color:{warna_pnl}; font-size:18px; font-weight:bold;'>{simbol_pnl}{format_rp(data['PnL_Rp'])} ({simbol_pnl}{data['PnL_Pct']:.2f}%)</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span style='color:gray;'>Nilai Aset</span><br><span style='font-size:16px; font-weight:bold;'>{format_rp(data['Nilai'])}</span>", unsafe_allow_html=True)
+                st.markdown("<hr style='margin:0.8em 0; opacity:0.2'>", unsafe_allow_html=True)
+
+    except FileNotFoundError:
+        st.error("File 'portofolio_aktif.csv' tidak ditemukan.")
+    except Exception as e:
+        st.error(f"Terjadi kesalahan: {e}")
                             fig.add_trace(go.Scatter(x=tgl_pred, y=predictions, mode='lines', name='Prediksi H+7', line=dict(color='#F59E0B', width=2, dash='dash')))
                             
                             upper_band = predictions + jarak_toleransi
