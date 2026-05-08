@@ -1,6 +1,6 @@
 streamlit
 yfinance
-numpy
 pandas
-matplotlib
+numpy
 scikit-learn
+plotly
