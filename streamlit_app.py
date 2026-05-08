@@ -15,7 +15,7 @@ st.title("Radar Volatilitas & Prediksi Harga")
 st.sidebar.header("Parameter Input")
 
 # Input Ticker & Harga (Default Kosong)
-ticker_input = st.sidebar.text_input("Kode Saham", value=None, placeholder="Contoh: MAPI")
+ticker_input = st.sidebar.text_input("Kode Saham", value=None, placeholder="Contoh: BBCA")
 harga_entry = st.sidebar.number_input("Harga Entry (Opsional)", value=None, placeholder="Masukkan harga beli")
 pengali_atr = st.sidebar.slider("Pengali ATR (Toleransi)", 1.0, 3.0, 1.5, 0.5)
 
