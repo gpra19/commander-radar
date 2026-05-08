@@ -1,10 +1,9 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from sklearn.linear_model import LinearRegression
-from datetime import datetime, timedelta
+streamlit
+yfinance
+pandas
+numpy
+scikit-learn
+plotly
 
 # --- KONFIGURASI HALAMAN (WIDE MODE) ---
 st.set_page_config(page_title="Radar Analisis Saham", layout="wide")
