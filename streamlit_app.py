@@ -6,110 +6,156 @@ import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from datetime import datetime, timedelta
 
-# --- FUNGSI FORMAT ANGKA RIBUAN (TITIK) ---
+# --- FUNGSI FORMAT ANGKA (TITIK) ---
 def format_rp(angka):
-    if pd.isna(angka):
-        return "-"
-    # Format menjadi tanpa desimal, lalu ganti koma menjadi titik
+    if pd.isna(angka): return "-"
     return f"{angka:,.0f}".replace(",", ".")
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Radar Analisis Saham", layout="wide")
+st.set_page_config(page_title="The Commander Radar & Porto", layout="wide")
 
-st.title("Radar Volatilitas & Prediksi Harga")
+# --- NAVIGASI SIDEBAR ---
+st.sidebar.title("Menu Utama")
+menu = st.sidebar.radio("Pilih Mode:", ["Radar Analisis", "Portofolio Live"])
 
-# --- SIDEBAR INPUT ---
-st.sidebar.header("Parameter Input")
+# ==========================================
+# MODE 1: RADAR ANALISIS (KODE LAMA ANDA)
+# ==========================================
+if menu == "Radar Analisis":
+    st.title("Radar Volatilitas & Prediksi Harga")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.header("Parameter Radar")
+    ticker_input = st.sidebar.text_input("Kode Saham", value="", placeholder="Contoh: MAPI")
+    harga_entry_str = st.sidebar.text_input("Harga Entry (Opsional)", value="", placeholder="Masukkan harga beli")
+    pengali_atr = st.sidebar.slider("Pengali ATR", 1.0, 3.0, 1.5, 0.5)
 
-# Menggunakan text_input agar baris benar-benar kosong saat awal dimuat
-ticker_input = st.sidebar.text_input("Kode Saham", value="", placeholder="Contoh: BBCA")
-harga_entry_str = st.sidebar.text_input("Harga Entry (Opsional)", value="", placeholder="Masukkan harga beli")
-pengali_atr = st.sidebar.slider("Pengali ATR (Toleransi)", 1.0, 3.0, 1.5, 0.5)
-
-if st.sidebar.button("Proses Analisis"):
-    if not ticker_input:
-        st.warning("Silakan masukkan kode saham terlebih dahulu.")
-    else:
-        try:
-            with st.spinner('Sinkronisasi data...'):
+    if st.sidebar.button("Proses Analisis"):
+        if not ticker_input:
+            st.warning("Masukkan kode saham.")
+        else:
+            try:
                 ticker_yf = ticker_input.strip().upper()
-                if not ticker_yf.endswith(".JK"):
-                    ticker_yf += ".JK"
+                if not ticker_yf.endswith(".JK"): ticker_yf += ".JK"
                 
                 data = yf.download(ticker_yf, period="3mo", interval="1d", progress=False)
                 
-                if data.empty:
-                    st.error("Data tidak ditemukan. Pastikan kode saham benar.")
-                else:
+                if not data.empty:
                     if isinstance(data.columns, pd.MultiIndex):
                         data.columns = data.columns.get_level_values(0)
-
-                    df = data.copy()
-                    df['H-L'] = df['High'] - df['Low']
-                    df['H-PC'] = np.abs(df['High'] - df['Close'].shift(1))
-                    df['L-PC'] = np.abs(df['Low'] - df['Close'].shift(1))
-                    df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
-                    df['ATR'] = df['TR'].rolling(window=14).mean()
                     
+                    # Perhitungan ATR & Regresi (Logika sama seperti sebelumnya)
+                    df = data.copy()
+                    df['TR'] = pd.concat([df['High']-df['Low'], 
+                                          abs(df['High']-df['Close'].shift(1)), 
+                                          abs(df['Low']-df['Close'].shift(1))], axis=1).max(axis=1)
+                    df['ATR'] = df['TR'].rolling(window=14).mean()
                     atr_terkini = df['ATR'].iloc[-1]
                     jarak_toleransi = atr_terkini * pengali_atr
                     
-                    # Konversi string ke angka
                     try:
                         harga_beli = float(harga_entry_str) if harga_entry_str.strip() != "" else 0.0
-                    except ValueError:
+                    except:
                         harga_beli = 0.0
-                        
                     rekomendasi_sl = harga_beli - jarak_toleransi if harga_beli > 0 else 0
-                    
+
+                    # Linear Regression
                     df_pred = data.reset_index()
                     df_pred['Date_Ordinal'] = df_pred['Date'].map(datetime.toordinal)
-                    X = df_pred[['Date_Ordinal']].values
-                    y = df_pred['Close'].values
-                    
-                    model = LinearRegression()
-                    model.fit(X, y)
-                    
-                    last_date = df_pred['Date'].max()
-                    tgl_pred = [last_date + timedelta(days=i) for i in range(1, 8)]
-                    future_ordinals = np.array([d.toordinal() for d in tgl_pred]).reshape(-1, 1)
-                    predictions = model.predict(future_ordinals)
-                    
-                    # --- PANEL HASIL ---
-                    st.markdown("---")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.subheader("Analisis Volatilitas")
-                        st.metric("ATR Terkini", f"Rp {format_rp(atr_terkini)}")
-                        st.metric(f"Toleransi ({pengali_atr}x)", f"Rp {format_rp(jarak_toleransi)}")
-                        if harga_beli > 0:
-                            st.error(f"Stop Loss: Rp {format_rp(rekomendasi_sl)}")
-                    
-                    with col2:
-                        st.subheader("Prediksi Harga")
-                        pred_akhir = predictions[-1]
-                        harga_terakhir = df['Close'].iloc[-1]
-                        perubahan_pred = ((pred_akhir - harga_terakhir) / harga_terakhir) * 100
-                        st.metric("Proyeksi H+7", f"Rp {format_rp(pred_akhir)}", f"{perubahan_pred:.2f}%")
+                    X, y = df_pred[['Date_Ordinal']].values, df_pred['Close'].values
+                    model = LinearRegression().fit(X, y)
+                    tgl_pred = [df_pred['Date'].max() + timedelta(days=i) for i in range(1, 8)]
+                    predictions = model.predict(np.array([d.toordinal() for d in tgl_pred]).reshape(-1, 1))
 
-                    # --- VISUALISASI & TABEL ---
-                    tab1, tab2 = st.tabs(["📊 Grafik", "📝 Data Historis Mentah"])
+                    # Display Metrik
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+                    c1.metric("ATR Terkini", f"Rp {format_rp(atr_terkini)}")
+                    if harga_beli > 0:
+                        c1.error(f"Stop Loss: Rp {format_rp(rekomendasi_sl)}")
                     
-                    with tab1:
-                        fig = go.Figure()
-                        
-                        hist_data = df_pred.tail(30)
-                        
-                        # Gabungkan semua tanggal (historis + prediksi) untuk panjang garis lurus
-                        tanggal_min = hist_data['Date'].min()
-                        tanggal_max = pd.Series(tgl_pred).max()
-                        
-                        fig.add_trace(go.Scatter(x=hist_data['Date'], y=hist_data['Close'], 
-                                                 mode='lines', name='Harga Close', 
-                                                 line=dict(color='white', width=2)))
-                        
-                        fig.add_trace(go.Scatter(x=tgl_pred, y=predictions, 
+                    pred_akhir = predictions[-1]
+                    perubahan = ((pred_akhir - df['Close'].iloc[-1]) / df['Close'].iloc[-1]) * 100
+                    c2.metric("Proyeksi H+7", f"Rp {format_rp(pred_akhir)}", f"{perubahan:.2f}%")
+
+                    # Grafik Plotly
+                    fig = go.Figure()
+                    hist_data = df_pred.tail(30)
+                    fig.add_trace(go.Scatter(x=hist_data['Date'], y=hist_data['Close'], name='Close', line=dict(color='white')))
+                    fig.add_trace(go.Scatter(x=tgl_pred, y=predictions, name='Prediksi', line=dict(color='#F59E0B', dash='dash')))
+                    
+                    if harga_beli > 0:
+                        fig.add_trace(go.Scatter(x=[hist_data['Date'].min(), max(tgl_pred)], y=[harga_beli, harga_beli], name='Entry', line=dict(color='#10B981', dash='dot')))
+                        fig.add_trace(go.Scatter(x=[hist_data['Date'].min(), max(tgl_pred)], y=[rekomendasi_sl, rekomendasi_sl], name='SL', line=dict(color='#EF4444')))
+
+                    fig.update_layout(template='plotly_dark', hovermode='x', dragmode=False, height=450)
+                    fig.update_xaxes(fixedrange=True); fig.update_yaxes(fixedrange=True)
+                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+                    # Tabel Mentah
+                    df_raw = df[['Open', 'High', 'Low', 'Close', 'Volume']].tail(10).copy()
+                    df_raw['Volume'] = df_raw['Volume'] / 100
+                    df_raw.index = df_raw.index.strftime('%d-%m-%Y')
+                    for col in df_raw.columns:
+                        df_raw[col] = df_raw[col].apply(format_rp)
+                    st.dataframe(df_raw, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+# ==========================================
+# MODE 2: PORTOFOLIO LIVE (FITUR BARU)
+# ==========================================
+elif menu == "Portofolio Live":
+    st.title("Brankas Portofolio")
+    
+    try:
+        df_porto = pd.read_csv('portofolio_aktif.csv')
+        total_modal, total_nilai = 0, 0
+        live_list = []
+
+        with st.spinner("Memperbarui harga pasar..."):
+            for _, row in df_porto.iterrows():
+                kode = str(row['Kode']).strip().upper()
+                kode_yf = kode if kode.endswith('.JK') else f"{kode}.JK"
+                
+                # Ambil data live
+                t_data = yf.download(kode_yf, period="1d", progress=False)
+                last_p = t_data['Close'].iloc[-1] if not t_data.empty else row['Harga_Average']
+                
+                modal = (row['Lot'] * 100) * row['Harga_Average']
+                nilai = (row['Lot'] * 100) * last_p
+                pnl_rp = nilai - modal
+                pnl_pct = (pnl_rp / modal * 100) if modal > 0 else 0
+                
+                total_modal += modal
+                total_nilai += nilai
+                live_list.append({"Kode": kode.replace(".JK",""), "Lot": row['Lot'], "Avg": row['Harga_Average'], 
+                                  "Last": last_p, "Nilai": nilai, "PnL_Rp": pnl_rp, "PnL_Pct": pnl_pct})
+
+        # Ringkasan Atas
+        st.markdown("---")
+        total_pnl = total_nilai - total_modal
+        total_pnl_pct = (total_pnl / total_modal * 100) if total_modal > 0 else 0
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Nilai", format_rp(total_nilai))
+        c2.metric("Total Modal", format_rp(total_modal))
+        c3.metric("Total Return", format_rp(total_pnl), f"{total_pnl_pct:.2f}%")
+
+        st.markdown("### Detail Aset")
+        for d in live_list:
+            with st.container():
+                col_a, col_b, col_c = st.columns([1, 1, 1])
+                warna = "#10B981" if d['PnL_Rp'] > 0 else "#EF4444"
+                
+                col_a.markdown(f"**{d['Kode']}** \n{d['Lot']:g} Lot")
+                col_b.markdown(f"Avg: {format_rp(d['Avg'])}  \nLast: {format_rp(d['Last'])}")
+                col_c.markdown(f"<span style='color:{warna}; font-weight:bold;'>{format_rp(d['PnL_Rp'])} ({d['PnL_Pct']:.2f}%)</span>  \nVal: {format_rp(d['Nilai'])}", unsafe_allow_html=True)
+                st.markdown("---")
+
+    except Exception as e:
+        st.info("Pastikan file 'portofolio_aktif.csv' sudah diunggah dan formatnya benar.")
                                                  mode='lines', name='Prediksi H+7', 
                                                  line=dict(color='#F59E0B', width=2, dash='dash')))
                         
