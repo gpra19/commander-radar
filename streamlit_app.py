@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from datetime import datetime, timedelta
+import os
 
 # --- FUNGSI FORMAT ANGKA ---
 def format_rp(angka):
@@ -15,13 +16,19 @@ def format_rp(angka):
 # --- SISTEM MEMORI (CACHE) ---
 @st.cache_data(ttl=300)
 def tarik_data_radar(ticker):
-    return yf.download(ticker, period="3mo", interval="1d", progress=False)
+    # PERBAIKAN BUG YAHOO FINANCE: Menggunakan Ticker.history() yang lebih stabil formatnya
+    tkr = yf.Ticker(ticker)
+    hist = tkr.history(period="3mo", interval="1d")
+    return hist
 
 @st.cache_data(ttl=60)
 def tarik_harga_live(ticker):
-    hist = yf.Ticker(ticker).history(period="1d")
-    if not hist.empty:
-        return float(hist['Close'].iloc[-1])
+    try:
+        hist = yf.Ticker(ticker).history(period="1d")
+        if not hist.empty:
+            return float(hist['Close'].iloc[-1])
+    except:
+        pass
     return None
 
 # --- KONFIGURASI HALAMAN ---
@@ -38,7 +45,7 @@ if menu == "Radar Analisis":
     
     st.sidebar.markdown("---")
     st.sidebar.header("Parameter Radar")
-    ticker_input = st.sidebar.text_input("Kode Saham", value="", placeholder="Contoh: MAPI")
+    ticker_input = st.sidebar.text_input("Kode Saham", value="", placeholder="Contoh: BBCA")
     harga_entry_str = st.sidebar.text_input("Harga Entry (Opsional)", value="", placeholder="Masukkan harga beli")
     pengali_atr = st.sidebar.slider("Pengali ATR (Toleransi)", 1.0, 3.0, 1.5, 0.5)
 
@@ -55,14 +62,14 @@ if menu == "Radar Analisis":
                     data = tarik_data_radar(ticker_yf)
                     
                     if data.empty:
-                        st.error("Data tidak ditemukan. Pastikan kode saham benar.")
+                        st.error("Data tidak ditemukan. Pastikan kode saham benar atau jaringan stabil.")
                     else:
-                        # 1. BUKA KOTAK BERLAPIS DULU (MultiIndex Flattening)
-                        if isinstance(data.columns, pd.MultiIndex):
-                            data.columns = data.columns.get_level_values(0)
+                        # PERBAIKAN PEMBERSIHAN DATA SEBELUM MASUK KE MODEL ML
+                        # Pastikan format timezone UTC dihapus agar toordinal() tidak error
+                        if data.index.tz is not None:
+                            data.index = data.index.tz_localize(None)
                             
-                        # 2. BARU BERSIHKAN BARIS HANTU (NaN)
-                        data = data.dropna(subset=['Close'])
+                        data = data.dropna(subset=['Close', 'High', 'Low'])
 
                         if data.empty:
                             st.warning("Data saham kosong (kemungkinan sedang disuspensi).")
@@ -74,7 +81,8 @@ if menu == "Radar Analisis":
                             df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
                             df['ATR'] = df['TR'].rolling(window=14).mean()
                             
-                            atr_terkini = df['ATR'].iloc[-1]
+                            # Mengambil nilai terbaru tanpa NaN
+                            atr_terkini = df['ATR'].dropna().iloc[-1] if not df['ATR'].dropna().empty else 0
                             jarak_toleransi = atr_terkini * pengali_atr
                             
                             try:
@@ -85,6 +93,10 @@ if menu == "Radar Analisis":
                             rekomendasi_sl = harga_beli - jarak_toleransi if harga_beli > 0 else 0
                             
                             df_pred = data.reset_index()
+                            # Menangani kolom Date jika bernama 'index' atau 'Datetime' bawaan YF
+                            if 'Date' not in df_pred.columns:
+                                df_pred = df_pred.rename(columns={'index': 'Date', 'Datetime': 'Date'})
+                                
                             df_pred['Date_Ordinal'] = df_pred['Date'].map(datetime.toordinal)
                             X = df_pred[['Date_Ordinal']].values
                             y = df_pred['Close'].values
@@ -154,63 +166,68 @@ if menu == "Radar Analisis":
 elif menu == "Portofolio Live":
     st.title("📊 Portofolio Live")
     
-    try:
-        df_porto = pd.read_csv('portofolio_aktif.csv')
-        total_modal_all = 0
-        total_nilai_all = 0
-        live_data = []
+    # PERBAIKAN: Cek eksistensi dan kekosongan file CSV
+    if not os.path.exists('portofolio_aktif.csv') or os.path.getsize('portofolio_aktif.csv') == 0:
+        st.info("📂 Gudang Senjata (Portofolio) saat ini kosong. Untuk menambahkan, buat atau isi file 'portofolio_aktif.csv'.")
+    else:
+        try:
+            df_porto = pd.read_csv('portofolio_aktif.csv')
+            
+            if df_porto.empty:
+                st.info("📂 Gudang Senjata (Portofolio) saat ini kosong.")
+            else:
+                total_modal_all = 0
+                total_nilai_all = 0
+                live_data = []
 
-        with st.spinner("Menghitung valuasi portofolio..."):
-            for index, row in df_porto.iterrows():
-                kode_asli = str(row['Kode']).strip().upper()
-                kode_yf = kode_asli if kode_asli.endswith('.JK') else f"{kode_asli}.JK"
-                
-                lot = float(row['Lot'])
-                avg_price = float(row['Harga_Average'])
-                
-                live_price = tarik_harga_live(kode_yf)
-                last_price = live_price if live_price is not None and not pd.isna(live_price) else avg_price
-                
-                lembar = lot * 100
-                modal_aset = lembar * avg_price
-                nilai_aset = lembar * last_price
-                
-                pnl_rp = nilai_aset - modal_aset
-                pnl_pct = (pnl_rp / modal_aset) * 100 if modal_aset > 0 else 0
-                
-                total_modal_all += modal_aset
-                total_nilai_all += nilai_aset
-                
-                live_data.append({
-                    "Kode": kode_asli.replace(".JK", ""), "Lot": lot, "Avg": avg_price, "Last": last_price,
-                    "Modal": modal_aset, "Nilai": nilai_aset, "PnL_Rp": pnl_rp, "PnL_Pct": pnl_pct
-                })
+                with st.spinner("Menghitung valuasi portofolio..."):
+                    for index, row in df_porto.iterrows():
+                        kode_asli = str(row['Kode']).strip().upper()
+                        kode_yf = kode_asli if kode_asli.endswith('.JK') else f"{kode_asli}.JK"
+                        
+                        lot = float(row['Lot'])
+                        avg_price = float(row['Harga_Average'])
+                        
+                        live_price = tarik_harga_live(kode_yf)
+                        last_price = live_price if live_price is not None and not pd.isna(live_price) else avg_price
+                        
+                        lembar = lot * 100
+                        modal_aset = lembar * avg_price
+                        nilai_aset = lembar * last_price
+                        
+                        pnl_rp = nilai_aset - modal_aset
+                        pnl_pct = (pnl_rp / modal_aset) * 100 if modal_aset > 0 else 0
+                        
+                        total_modal_all += modal_aset
+                        total_nilai_all += nilai_aset
+                        
+                        live_data.append({
+                            "Kode": kode_asli.replace(".JK", ""), "Lot": lot, "Avg": avg_price, "Last": last_price,
+                            "Modal": modal_aset, "Nilai": nilai_aset, "PnL_Rp": pnl_rp, "PnL_Pct": pnl_pct
+                        })
 
-        total_pnl_rp = total_nilai_all - total_modal_all
-        total_pnl_pct = (total_pnl_rp / total_modal_all) * 100 if total_modal_all > 0 else 0
-        
-        st.markdown("### Ringkasan Aset")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Nilai Saat Ini", f"Rp {format_rp(total_nilai_all)}")
-        col2.metric("Total Modal", f"Rp {format_rp(total_modal_all)}")
-        col3.metric("Total Return", f"Rp {format_rp(total_pnl_rp)}", f"{total_pnl_pct:.2f}%")
-        
-        st.markdown("---")
-        st.markdown("### Detail Aset")
+                total_pnl_rp = total_nilai_all - total_modal_all
+                total_pnl_pct = (total_pnl_rp / total_modal_all) * 100 if total_modal_all > 0 else 0
+                
+                st.markdown("### Ringkasan Aset")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Nilai Saat Ini", f"Rp {format_rp(total_nilai_all)}")
+                col2.metric("Total Modal", f"Rp {format_rp(total_modal_all)}")
+                col3.metric("Total Return", f"Rp {format_rp(total_pnl_rp)}", f"{total_pnl_pct:.2f}%")
+                
+                st.markdown("---")
+                st.markdown("### Detail Aset")
 
-        for data in live_data:
-            with st.container():
-                c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
-                c1.markdown(f"<h4 style='margin-bottom:0;'>{data['Kode']}</h4><span style='color:gray;'>{data['Lot']:g} Lot</span>", unsafe_allow_html=True)
-                c2.markdown(f"<span style='color:gray;'>Avg:</span> {format_rp(data['Avg'])}<br><span style='color:gray;'>Last:</span> {format_rp(data['Last'])}", unsafe_allow_html=True)
-                warna_pnl = "#10B981" if data['PnL_Rp'] > 0 else "#EF4444" if data['PnL_Rp'] < 0 else "gray"
-                simbol_pnl = "+" if data['PnL_Rp'] > 0 else ""
-                c3.markdown(f"<span style='color:gray;'>Return</span><br><span style='color:{warna_pnl}; font-size:18px; font-weight:bold;'>{simbol_pnl}{format_rp(data['PnL_Rp'])} ({simbol_pnl}{data['PnL_Pct']:.2f}%)</span>", unsafe_allow_html=True)
-                c4.markdown(f"<span style='color:gray;'>Nilai Aset</span><br><span style='font-size:16px; font-weight:bold;'>{format_rp(data['Nilai'])}</span>", unsafe_allow_html=True)
-                st.markdown("<hr style='margin:0.8em 0; opacity:0.2'>", unsafe_allow_html=True)
+                for data in live_data:
+                    with st.container():
+                        c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
+                        c1.markdown(f"<h4 style='margin-bottom:0;'>{data['Kode']}</h4><span style='color:gray;'>{data['Lot']:g} Lot</span>", unsafe_allow_html=True)
+                        c2.markdown(f"<span style='color:gray;'>Avg:</span> {format_rp(data['Avg'])}<br><span style='color:gray;'>Last:</span> {format_rp(data['Last'])}", unsafe_allow_html=True)
+                        warna_pnl = "#10B981" if data['PnL_Rp'] > 0 else "#EF4444" if data['PnL_Rp'] < 0 else "gray"
+                        simbol_pnl = "+" if data['PnL_Rp'] > 0 else ""
+                        c3.markdown(f"<span style='color:gray;'>Return</span><br><span style='color:{warna_pnl}; font-size:18px; font-weight:bold;'>{simbol_pnl}{format_rp(data['PnL_Rp'])} ({simbol_pnl}{data['PnL_Pct']:.2f}%)</span>", unsafe_allow_html=True)
+                        c4.markdown(f"<span style='color:gray;'>Nilai Aset</span><br><span style='font-size:16px; font-weight:bold;'>{format_rp(data['Nilai'])}</span>", unsafe_allow_html=True)
+                        st.markdown("<hr style='margin:0.8em 0; opacity:0.2'>", unsafe_allow_html=True)
 
-    except FileNotFoundError:
-        st.error("File 'portofolio_aktif.csv' tidak ditemukan.")
-    except Exception as e:
-        st.error(f"Terjadi kesalahan: {e}")
-                            
+        except Exception as e:
+            st.error(f"Terjadi kesalahan saat memproses portofolio: {e}")
